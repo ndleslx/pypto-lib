@@ -69,16 +69,17 @@ def build_qwen3_scope1_program(
             for b0 in pl.range(0, batch, BATCH_TILE):
                 # Stage 1: compute per-chunk RMS partials, reduce once, then normalize.
                 normed_chunks = pl.create_tensor([hidden_blocks * BATCH_TILE, K_CHUNK], dtype=pl.BF16)
-                sq_partials = pl.create_tensor([hidden_blocks, BATCH_TILE], dtype=pl.FP32)
-                for kb_i in pl.range(hidden_blocks):
-                    k0_i = kb_i * K_CHUNK
-                    with pl.incore():
+
+                with pl.auto_incore():
+                    sq_partials = pl.create_tensor([hidden_blocks, BATCH_TILE], dtype=pl.FP32)
+                    for kb_i in pl.parallel(hidden_blocks, chunk=4):
+                        k0_i = kb_i * K_CHUNK
                         x_i = pl.cast(
                             pl.slice(hidden_states, [BATCH_TILE, K_CHUNK], [b0, k0_i]),
                             target_type=pl.FP32,
                         )
                         partial_sq_i = pl.reshape(pl.row_sum(pl.mul(x_i, x_i)), [1, BATCH_TILE])
-                    sq_partials = pl.assemble(sq_partials, partial_sq_i, [kb_i, 0])
+                        sq_partials = pl.assemble(sq_partials, partial_sq_i, [kb_i, 0])
 
                 with pl.incore():
                     partial_sq = pl.full([1, BATCH_TILE], dtype=pl.FP32, value=0.0)
@@ -91,9 +92,9 @@ def build_qwen3_scope1_program(
                     )
                     inv_rms_tile = pl.recip(pl.sqrt(variance))
 
-                for kb in pl.range(hidden_blocks):
-                    k0 = kb * K_CHUNK
-                    with pl.incore():
+                with pl.auto_incore():
+                    for kb in pl.parallel(hidden_blocks, chunk=16):
+                        k0 = kb * K_CHUNK
                         x_chunk = pl.cast(
                             pl.slice(hidden_states, [BATCH_TILE, K_CHUNK], [b0, k0]),
                             target_type=pl.FP32,
@@ -103,7 +104,7 @@ def build_qwen3_scope1_program(
                             pl.col_expand_mul(pl.row_expand_mul(x_chunk, inv_rms_tile), gamma),
                             target_type=pl.BF16,
                         )
-                    normed_chunks = pl.assemble(normed_chunks, normed_chunk, [kb * BATCH_TILE, 0])
+                        normed_chunks = pl.assemble(normed_chunks, normed_chunk, [kb * BATCH_TILE, 0])
 
                 # Stage 2: Q projection (matmul + vector add accumulation).
                 for ob in pl.range(q_out_blocks):
