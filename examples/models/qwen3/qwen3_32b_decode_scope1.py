@@ -107,63 +107,40 @@ def build_qwen3_scope1_program(
                         normed_chunks = pl.assemble(normed_chunks, normed_chunk, [kb * BATCH_TILE, 0])
 
                 # Stage 2: Q projection (matmul + vector add accumulation).
-                for ob in pl.range(q_out_blocks):
-                    q0 = ob * Q_OUT_CHUNK
-                    q_partial = pl.create_tensor([hidden_blocks * BATCH_TILE, Q_OUT_CHUNK], dtype=pl.FP32)
-
-                    with pl.incore():
+                with pl.auto_incore(split=pl.SplitMode.UP_DOWN):
+                    for ob in pl.parallel(q_out_blocks, chunk=1):
+                        q0 = ob * Q_OUT_CHUNK
+                        q_acc = pl.full([BATCH_TILE, Q_OUT_CHUNK], dtype=pl.FP32, value=0.0)
                         for kb in pl.range(hidden_blocks):
                             k0 = kb * K_CHUNK
                             tile_a_i = pl.slice(normed_chunks, [BATCH_TILE, K_CHUNK], [kb * BATCH_TILE, 0])
                             tile_b_i = pl.slice(wq, [K_CHUNK, Q_OUT_CHUNK], [k0, q0])
-                            tile_mm_i = pl.matmul(tile_a_i, tile_b_i, out_dtype=pl.FP32)
-                            q_partial = pl.assemble(q_partial, tile_mm_i, [kb * BATCH_TILE, 0])
+                            q_acc = pl.add(q_acc, pl.matmul(tile_a_i, tile_b_i, out_dtype=pl.FP32))
+                        q_proj = pl.assemble(q_proj, q_acc, [b0, q0])
 
-                    with pl.incore():
-                        q_acc = pl.full([BATCH_TILE, Q_OUT_CHUNK], dtype=pl.FP32, value=0.0)
-                        for kb in pl.range(hidden_blocks):
-                            q_part_i = pl.slice(q_partial, [BATCH_TILE, Q_OUT_CHUNK], [kb * BATCH_TILE, 0])
-                            q_acc = pl.add(q_acc, q_part_i)
-
-                    q_proj = pl.assemble(q_proj, q_acc, [b0, q0])
-
-                # Stage 3: K/V projection (matmul + vector add accumulation).
-                for ob in pl.range(kv_out_blocks):
-                    kv0 = ob * KV_OUT_CHUNK
-                    k_partial = pl.create_tensor([hidden_blocks * BATCH_TILE, KV_OUT_CHUNK], dtype=pl.FP32)
-
-                    with pl.incore():
+                # Stage 3a: K projection (matmul + vector add accumulation).
+                with pl.auto_incore(split=pl.SplitMode.UP_DOWN):
+                    for ob in pl.parallel(kv_out_blocks, chunk=1):
+                        kv0 = ob * KV_OUT_CHUNK
+                        k_acc = pl.full([BATCH_TILE, KV_OUT_CHUNK], dtype=pl.FP32, value=0.0)
                         for kb in pl.range(hidden_blocks):
                             k0 = kb * K_CHUNK
                             tile_a_i = pl.slice(normed_chunks, [BATCH_TILE, K_CHUNK], [kb * BATCH_TILE, 0])
                             tile_wk_i = pl.slice(wk, [K_CHUNK, KV_OUT_CHUNK], [k0, kv0])
-                            tile_k_mm_i = pl.matmul(tile_a_i, tile_wk_i, out_dtype=pl.FP32)
-                            k_partial = pl.assemble(k_partial, tile_k_mm_i, [kb * BATCH_TILE, 0])
+                            k_acc = pl.add(k_acc, pl.matmul(tile_a_i, tile_wk_i, out_dtype=pl.FP32))
+                        k_proj = pl.assemble(k_proj, k_acc, [b0, kv0])
 
-                    with pl.incore():
-                        k_acc = pl.full([BATCH_TILE, KV_OUT_CHUNK], dtype=pl.FP32, value=0.0)
-                        for kb in pl.range(hidden_blocks):
-                            k_part_i = pl.slice(k_partial, [BATCH_TILE, KV_OUT_CHUNK], [kb * BATCH_TILE, 0])
-                            k_acc = pl.add(k_acc, k_part_i)
-
-                    k_proj = pl.assemble(k_proj, k_acc, [b0, kv0])
-
-                    v_partial = pl.create_tensor([hidden_blocks * BATCH_TILE, KV_OUT_CHUNK], dtype=pl.FP32)
-                    with pl.incore():
+                # Stage 3b: V projection (matmul + vector add accumulation).
+                with pl.auto_incore(split=pl.SplitMode.UP_DOWN):
+                    for ob in pl.parallel(kv_out_blocks, chunk=1):
+                        kv0 = ob * KV_OUT_CHUNK
+                        v_acc = pl.full([BATCH_TILE, KV_OUT_CHUNK], dtype=pl.FP32, value=0.0)
                         for kb in pl.range(hidden_blocks):
                             k0 = kb * K_CHUNK
                             tile_a_i = pl.slice(normed_chunks, [BATCH_TILE, K_CHUNK], [kb * BATCH_TILE, 0])
                             tile_wv_i = pl.slice(wv, [K_CHUNK, KV_OUT_CHUNK], [k0, kv0])
-                            tile_v_mm_i = pl.matmul(tile_a_i, tile_wv_i, out_dtype=pl.FP32)
-                            v_partial = pl.assemble(v_partial, tile_v_mm_i, [kb * BATCH_TILE, 0])
-
-                    with pl.incore():
-                        v_acc = pl.full([BATCH_TILE, KV_OUT_CHUNK], dtype=pl.FP32, value=0.0)
-                        for kb in pl.range(hidden_blocks):
-                            v_part_i = pl.slice(v_partial, [BATCH_TILE, KV_OUT_CHUNK], [kb * BATCH_TILE, 0])
-                            v_acc = pl.add(v_acc, v_part_i)
-
-                    v_proj = pl.assemble(v_proj, v_acc, [b0, kv0])
+                            v_acc = pl.add(v_acc, pl.matmul(tile_a_i, tile_wv_i, out_dtype=pl.FP32))
+                        v_proj = pl.assemble(v_proj, v_acc, [b0, kv0])
 
             return q_proj, k_proj, v_proj
 
