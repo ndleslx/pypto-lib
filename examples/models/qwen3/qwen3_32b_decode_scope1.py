@@ -93,35 +93,56 @@ def build_qwen3_scope1_program(
 
                 # Stage 2: Q projection (vector normalization + matmul_acc).
                 with pl.at(level=pl.Level.CORE_GROUP, optimization=pl.chunked_loop_optimizer):
-                    for ob in pl.parallel(q_out_blocks, chunk=3):
-                        q0 = ob * Q_OUT_CHUNK
+                    q_out = pl.full([BATCH_TILE, q_out_blocks * Q_OUT_CHUNK], dtype=pl.FP32, value=0.0)
+                    for kb in pl.range(hidden_blocks):
+                        k0 = kb * K_CHUNK
                         x_chunk = pl.cast(
-                            pl.slice(hidden_states, [BATCH_TILE, K_CHUNK], [b0, 0]),
-                            target_type=pl.FP32,
+                            pl.slice(hidden_states, [BATCH_TILE, K_CHUNK], [b0, k0]),
+                        target_type=pl.FP32,
                         )
-                        gamma = pl.slice(input_rms_weight, [1, K_CHUNK], [0, 0])
+                        gamma = pl.slice(input_rms_weight, [1, K_CHUNK], [0, k0])
                         normed_chunk = pl.cast(
-                            pl.col_expand_mul(pl.row_expand_mul(x_chunk, inv_rms), gamma),
-                            target_type=pl.BF16,
+                        pl.col_expand_mul(pl.row_expand_mul(x_chunk, inv_rms), gamma),
+                        target_type=pl.BF16,
                         )
-                        tile_b_i = pl.slice(wq, [K_CHUNK, Q_OUT_CHUNK], [0, q0])
-                        q_acc = pl.matmul(normed_chunk, tile_b_i, out_dtype=pl.FP32)
-
-                        for kb in pl.range(1, hidden_blocks):
-                            k0 = kb * K_CHUNK
-                            x_chunk = pl.cast(
-                                pl.slice(hidden_states, [BATCH_TILE, K_CHUNK], [b0, k0]),
-                            target_type=pl.FP32,
-                            )
-                            gamma = pl.slice(input_rms_weight, [1, K_CHUNK], [0, k0])
-                            normed_chunk = pl.cast(
-                            pl.col_expand_mul(pl.row_expand_mul(x_chunk, inv_rms), gamma),
-                            target_type=pl.BF16,
-                            )
+                        for ob in pl.range(q_out_blocks):
+                            q0 = ob * Q_OUT_CHUNK
                             tile_b_i = pl.slice(wq, [K_CHUNK, Q_OUT_CHUNK], [k0, q0])
-                            q_acc = pl.matmul_acc(q_acc, normed_chunk, tile_b_i)
+                            q_out_i = pl.slice(q_out, [BATCH_TILE, Q_OUT_CHUNK], [0, q0])
+                            mm_acc_out_i = pl.add(q_out_i, pl.matmul(normed_chunk, tile_b_i))
+                            q_out = pl.assemble(q_out, mm_acc_out_i, [0, q0])
+                    q_proj = pl.assemble(q_proj, q_out, [b0, 0])
 
-                        q_proj = pl.assemble(q_proj, q_acc, [b0, q0])
+                # with pl.at(level=pl.Level.CORE_GROUP, optimization=pl.chunked_loop_optimizer):
+                #     for ob in pl.parallel(q_out_blocks, chunk=3):
+                #         q0 = ob * Q_OUT_CHUNK
+                #         x_chunk = pl.cast(
+                #             pl.slice(hidden_states, [BATCH_TILE, K_CHUNK], [b0, 0]),
+                #             target_type=pl.FP32,
+                #         )
+                #         gamma = pl.slice(input_rms_weight, [1, K_CHUNK], [0, 0])
+                #         normed_chunk = pl.cast(
+                #             pl.col_expand_mul(pl.row_expand_mul(x_chunk, inv_rms), gamma),
+                #             target_type=pl.BF16,
+                #         )
+                #         tile_b_i = pl.slice(wq, [K_CHUNK, Q_OUT_CHUNK], [0, q0])
+                #         q_acc = pl.matmul(normed_chunk, tile_b_i, out_dtype=pl.FP32)
+
+                #         for kb in pl.range(1, hidden_blocks):
+                #             k0 = kb * K_CHUNK
+                #             x_chunk = pl.cast(
+                #                 pl.slice(hidden_states, [BATCH_TILE, K_CHUNK], [b0, k0]),
+                #             target_type=pl.FP32,
+                #             )
+                #             gamma = pl.slice(input_rms_weight, [1, K_CHUNK], [0, k0])
+                #             normed_chunk = pl.cast(
+                #             pl.col_expand_mul(pl.row_expand_mul(x_chunk, inv_rms), gamma),
+                #             target_type=pl.BF16,
+                #             )
+                #             tile_b_i = pl.slice(wq, [K_CHUNK, Q_OUT_CHUNK], [k0, q0])
+                #             q_acc = pl.matmul_acc(q_acc, normed_chunk, tile_b_i)
+
+                #         q_proj = pl.assemble(q_proj, q_acc, [b0, q0])
 
                 # Stage 3: K/V projection (vector normalization + matmul_acc).
                 with pl.at(level=pl.Level.CORE_GROUP, optimization=pl.chunked_loop_optimizer):
