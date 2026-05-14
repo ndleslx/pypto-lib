@@ -877,7 +877,7 @@ class PyptoQwen14BExecutor(ModelExecutor):
             lg_entry_fn(
                 orch, None, config,
                 tensors=tensors_dict,
-                callables=lg_chip_callables,
+                callables=lg_callable_ids,
                 sub_ids=sub_ids,
                 _keep=_keep,
                 contexts=worker.chip_contexts,
@@ -1020,7 +1020,11 @@ class PyptoQwen14BExecutor(ModelExecutor):
 
         _mark("Worker_ctor")
 
-        # Register l3_generate sub-worker callables (including sample_and_prepare).
+        # Register chip callables and sub-worker callables before worker.init().
+        lg_callable_ids: dict[str, int] = {}
+        for name, callable_obj in lg_chip_callables.items():
+            lg_callable_ids[name] = worker.register(callable_obj)
+
         sub_ids: dict[str, int] = {}
         for name, fn in lg_sub_fns.items():
             sub_ids[name] = worker.register(fn)
