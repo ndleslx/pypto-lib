@@ -12,13 +12,13 @@
 import pypto.language as pl
 
 import config as _cfg
-from config import (FLASH as M, DECODE_BATCH, DECODE_SEQ, FP32_NEG_INF, EP_WORLD_SIZE,
+from config import (FLASH as M, MOE_BATCH, MOE_SEQ, FP32_NEG_INF, EP_WORLD_SIZE,
                     INT8_SCALE_MAX, INT8_AMAX_EPS)
 
 
 # model config
-B = DECODE_BATCH
-S = DECODE_SEQ
+B = MOE_BATCH
+S = MOE_SEQ
 T = B * S
 D = M.hidden_size
 NORM_EPS = M.rms_norm_eps

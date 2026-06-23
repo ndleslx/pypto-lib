@@ -28,9 +28,8 @@ from config import DECODE_TOKENS, FLASH as M, LM_HEAD_TP_SIZE
 
 
 # Tensor shapes and loop trip counts are static in the frontend, so the TP
-# world size is a build-time constant. Deployment uses LM_HEAD_TP_SIZE=8; this
-# demo validates on 2 NPUs.
-TP_SIZE = 2
+# world size is a build-time constant for the deployment topology.
+TP_SIZE = LM_HEAD_TP_SIZE
 
 T = DECODE_TOKENS  # 128 decode tokens.
 D = M.hidden_size  # 4096 hidden size.
