@@ -32,6 +32,15 @@ def _parse_ep_argv():
     return _EP_DEFAULT
 
 
+def _parse_moe_shape_argv():
+    for i, tok in enumerate(sys.argv):
+        if tok == "--moe-shape" and i + 1 < len(sys.argv):
+            return sys.argv[i + 1]
+        if tok.startswith("--moe-shape="):
+            return tok.split("=", 1)[1]
+    return None
+
+
 EP = _parse_ep_argv()
 # EP==1 is a single-card degenerate world: routing is global-but-local (one rank
 # owns every expert), so the cross-rank HCCL dispatch/combine collapse to in-card
@@ -40,12 +49,27 @@ EP = _parse_ep_argv()
 config.EP_WORLD_SIZE = EP
 config.EP_ROUTING_GLOBAL = True
 config.FLASH = dataclasses.replace(config.FLASH, n_routed_experts=config.FLASH.n_routed_experts // 8 * EP)  # 32 experts/rank
+_MOE_SHAPE = _parse_moe_shape_argv()
+if _MOE_SHAPE == "prefill":
+    config.MOE_BATCH = config.PREFILL_BATCH
+    config.MOE_SEQ = config.PREFILL_SEQ
+elif _MOE_SHAPE == "decode":
+    config.MOE_BATCH = config.DECODE_BATCH
+    config.MOE_SEQ = config.DECODE_SEQ
+elif _MOE_SHAPE is not None:
+    raise ValueError(f"unsupported --moe-shape={_MOE_SHAPE!r}; expected prefill or decode")
+config.RECV_MAX = (
+    config.MOE_BATCH
+    * config.MOE_SEQ
+    * config.FLASH.num_experts_per_tok
+    // (config.FLASH.n_routed_experts // config.EP_WORLD_SIZE)
+) * config.RECV_SAFETY
 
 import pypto.language as pl
 import pypto.language.distributed as pld
 from pypto.ir.distributed_compiled_program import DistributedConfig
 
-from config import FLASH as M, DECODE_BATCH, DECODE_SEQ, EP_WORLD_SIZE, RECV_MAX
+from config import FLASH as M, MOE_BATCH, MOE_SEQ, EP_WORLD_SIZE, RECV_MAX
 from hc_pre import hc_pre
 from hc_post import hc_post
 from gate import gate
@@ -55,8 +79,8 @@ from dispatch import dispatch, dispatch_ep1
 from combine import combine, combine_ep1
 
 
-B = DECODE_BATCH
-S = DECODE_SEQ
+B = MOE_BATCH
+S = MOE_SEQ
 T = B * S
 D = M.hidden_size
 TOPK = M.num_experts_per_tok

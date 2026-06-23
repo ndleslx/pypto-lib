@@ -188,6 +188,7 @@ def decode_layer(
     routed_y_buf: pld.DistributedTensor[[N_ROUTES, D], pl.BF16],
     combine_done: pld.DistributedTensor[[N_RANKS, 1], pl.INT32],
     layer_id: pl.Scalar[pl.INT32],
+    num_tokens: pl.Scalar[pl.INT32],
     my_rank: pl.Scalar[pl.INT32],
 ) -> pl.Tensor[[T, HC_MULT, D], pl.BF16]:
     x_attn = pl.create_tensor([T, HC_MULT, D], dtype=pl.BF16)
@@ -249,7 +250,7 @@ def decode_layer(
         pub_counts, count_done, data_done,
         recv_x, recv_scale, recv_w, recv_r_route,
         routed_y_buf, combine_done,
-        layer_id, pl.const(T, pl.INT32), my_rank,
+        layer_id, num_tokens, my_rank,
     )
     return x_next
 
@@ -342,6 +343,7 @@ def l3_decode_layer(
     shared_w2_scale: pl.Tensor[[N_RANKS, D], pl.FP32],
     x_next: pl.Out[pl.Tensor[[N_RANKS, T, HC_MULT, D], pl.BF16]],
     layer_id: pl.Scalar[pl.INT32],
+    num_tokens: pl.Scalar[pl.INT32],
 ):
     pub_counts_buf = pld.alloc_window_buffer(N_RANKS * N_RANKS * N_LOCAL * 4)
     count_done_buf = pld.alloc_window_buffer(N_RANKS * 4)
@@ -393,7 +395,7 @@ def l3_decode_layer(
             pub_counts, count_done, data_done,
             recv_x, recv_scale, recv_w, recv_r_route,
             routed_y_buf, combine_done,
-            layer_id, r,
+            layer_id, num_tokens, r,
             device=r,
         )
 
@@ -432,7 +434,7 @@ def golden_decode_layer(tensors):
 
     moe_tensors = dict(tensors)
     moe_tensors["x_hc"] = x_attn
-    moe_tensors["num_tokens"] = T
+    moe_tensors["num_tokens"] = int(tensors.get("num_tokens", T))
     golden_moe(moe_tensors)
 
 
@@ -622,7 +624,7 @@ def _attention_kind_for_layer(layer_id):
     raise ValueError(f"unsupported compress ratio {ratio} for layer_id={layer_id}")
 
 
-def build_tensor_specs(start_pos=None, layer_id=10):
+def build_tensor_specs(start_pos=None, layer_id=10, num_tokens=T):
     import torch
     from golden import ScalarSpec, TensorSpec
 
@@ -779,6 +781,7 @@ def build_tensor_specs(start_pos=None, layer_id=10):
     specs.extend([
         TensorSpec("x_next", [N_RANKS, T, HC_MULT, D], torch.bfloat16, is_output=True),
         ScalarSpec("layer_id", torch.int32, layer_id),
+        ScalarSpec("num_tokens", torch.int32, num_tokens),
     ])
     return specs
 
@@ -798,6 +801,8 @@ if __name__ == "__main__":
     parser.add_argument("--start-pos", type=int, default=None,
                         help="If set, use this single start_pos for all batches.")
     parser.add_argument("--layer-id", type=int, default=10)
+    parser.add_argument("--num-tokens", type=int, default=T,
+                        help="Fixture active token count, capped by T.")
     parser.add_argument("--enable-l2-swimlane", action="store_true", default=False)
     parser.add_argument("--compile-only", action="store_true", default=False)
     parser.add_argument("--runtime-dir", type=str, default=None)
@@ -813,6 +818,7 @@ if __name__ == "__main__":
         specs=build_tensor_specs(
             start_pos=args.start_pos,
             layer_id=args.layer_id,
+            num_tokens=args.num_tokens,
         ),
         golden_fn=golden_fn,
         compile_only=args.compile_only,

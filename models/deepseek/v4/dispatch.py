@@ -18,13 +18,13 @@ scales into the recv buffers.
 import pypto.language as pl
 import pypto.language.distributed as pld
 
-from config import (FLASH as M, DECODE_BATCH, DECODE_SEQ,
+from config import (FLASH as M, MOE_BATCH, MOE_SEQ,
                     EP_WORLD_SIZE, EP_RANK, RECV_MAX)
 
 
 # model config
-B = DECODE_BATCH
-S = DECODE_SEQ
+B = MOE_BATCH
+S = MOE_SEQ
 T = B * S
 D = M.hidden_size
 TOPK = M.num_experts_per_tok

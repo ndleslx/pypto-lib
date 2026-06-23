@@ -13,6 +13,11 @@ import pypto.language as pl
 import pypto.language.distributed as pld
 from pypto.ir.distributed_compiled_program import DistributedConfig
 
+import config as _config
+
+_config.MOE_BATCH = _config.PREFILL_BATCH
+_config.MOE_SEQ = _config.PREFILL_SEQ
+
 # Import moe first. It applies the EP2 FLASH override before dependent
 # modules bake config-derived MoE shapes.
 from moe import (

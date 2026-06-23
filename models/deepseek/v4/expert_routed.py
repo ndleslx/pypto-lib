@@ -15,13 +15,13 @@ into ``expert_shared.py``; both kernels are composed in ``moe.py``.
 
 import pypto.language as pl
 
-from config import (FLASH as M, DECODE_BATCH, DECODE_SEQ, INT8_SCALE_MAX, INT8_AMAX_EPS,
+from config import (FLASH as M, MOE_BATCH, MOE_SEQ, INT8_SCALE_MAX, INT8_AMAX_EPS,
                     EP_WORLD_SIZE, EP_RANK, RECV_MAX)
 
 
 # model config
-B = DECODE_BATCH
-S = DECODE_SEQ
+B = MOE_BATCH
+S = MOE_SEQ
 T = B * S
 D = M.hidden_size
 MOE_INTER = M.moe_intermediate_size
