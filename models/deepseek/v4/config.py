@@ -240,7 +240,7 @@ PRESETS = {p.name: p for p in (DEMO, FLASH, PRO)}
 
 # Deployment constants
 DECODE_BATCH = 8                  # B: requests per decode step
-DECODE_SEQ = 1                    # S: 1 token per step (single-token decode)
+DECODE_SEQ = 1                    # S: single-token decode
 DECODE_TOKENS = DECODE_BATCH * DECODE_SEQ
 PREFILL_BATCH = 1                 # B: prefill batch for the current kernel programs
 PREFILL_SEQ = 128                 # S: prefill sequence for the current kernel programs
@@ -266,7 +266,7 @@ RECV_SAFETY = 4
 # Per-expert recv-buffer depth: peak rows one local expert receives
 # (tokens * topk / expert-shard) * RECV_SAFETY, floored at 16. Decode and prefill
 # bake different depths; default to decode, prefill overrides to PREFILL_RECV_MAX.
-DECODE_RECV_MAX = max(16, DECODE_TOKENS * FLASH.num_experts_per_tok * RECV_SAFETY // (FLASH.n_routed_experts // EP_WORLD_SIZE))
+DECODE_RECV_MAX = max(64, DECODE_TOKENS * FLASH.num_experts_per_tok * RECV_SAFETY // (FLASH.n_routed_experts // EP_WORLD_SIZE))
 PREFILL_RECV_MAX = max(16, PREFILL_TOKENS * FLASH.num_experts_per_tok * RECV_SAFETY // (FLASH.n_routed_experts // EP_WORLD_SIZE))
 PREFILL_RECV_MAX = 1024  # real routing skews past the RECV_SAFETY=4 uniform bound; size for the observed peak
 RECV_MAX = DECODE_RECV_MAX
